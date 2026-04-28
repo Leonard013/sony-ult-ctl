@@ -1,10 +1,31 @@
 # sony-ult-ctl
 
-Control Sony ULT WEAR (WH-ULT900N) headphones from macOS via command line.
+Control Sony ULT WEAR (WH-ULT900N) headphones from macOS — no Sony Headphones Connect app needed.
 
-Reverse-engineered the Sony V2 Bluetooth RFCOMM protocol to toggle Noise Cancelling, Ambient Sound, Voice Focus, and ULT bass boost modes — no Sony Headphones Connect app needed.
+Reverse-engineered the Sony V2 Bluetooth RFCOMM protocol to toggle Noise Cancelling, Ambient Sound, Voice Focus, and ULT bass boost modes. Includes a **native Swift menu bar app** (117 KB) that auto-appears when headphones connect and hides when they disconnect.
 
-## Features
+## Menu Bar App
+
+`SonyULTMenu.app` — a native macOS menu bar app (no Python required).
+
+- Appears automatically when headphones connect, hides on disconnect
+- Checkmarks show the active mode
+- Plays a distinct sound on each mode switch
+- Battery level display
+- 117 KB binary, zero dependencies beyond macOS
+
+```bash
+# Build
+make
+
+# Install to /Applications + add to Login Items
+cp -r SonyULTMenu.app /Applications/
+open /Applications/SonyULTMenu.app
+```
+
+Edit `kDeviceMAC` in `SonyULTMenu.swift` before building.
+
+## CLI
 
 | Command | Description |
 |---------|-------------|
@@ -22,23 +43,22 @@ Reverse-engineered the Sony V2 Bluetooth RFCOMM protocol to toggle Noise Cancell
 
 ## Requirements
 
-- macOS (uses IOBluetooth RFCOMM — not BLE)
-- Python 3.10+
+- macOS 13+ (uses IOBluetooth RFCOMM — not BLE)
 - Sony ULT WEAR paired and connected via System Settings > Bluetooth
-
-```bash
-pip install pyobjc-framework-IOBluetooth pyobjc-framework-Cocoa
-```
+- **Menu bar app**: Xcode Command Line Tools (`xcode-select --install`)
+- **CLI only**: Python 3.10+ with `pip install pyobjc-framework-IOBluetooth pyobjc-framework-Cocoa`
 
 ## Setup
 
-Edit `DEVICE_MAC` in `sony_ult_ctl.py` to match your headphones' Bluetooth address. Find it in System Settings > Bluetooth > hover over device, or:
+Find your headphones' Bluetooth MAC address:
 
 ```bash
 system_profiler SPBluetoothDataType | grep -A2 "ULT WEAR"
 ```
 
-## Usage
+Edit `kDeviceMAC` in `SonyULTMenu.swift` and/or `DEVICE_MAC` in `sony_ult_ctl.py`.
+
+## CLI Usage
 
 ```bash
 # Check current state
