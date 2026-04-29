@@ -3,10 +3,10 @@ import IOBluetooth
 
 // ── Configuration ──────────────────────────────────────────────────
 
-private let kDeviceMAC  = "XX-XX-XX-XX-XX-XX"  // Replace with your headphones' Bluetooth MAC
+private let kDeviceMAC  = "88-92-CC-08-7B-89"
 private let kChannel: UInt8 = 18
 private let kPollSec: TimeInterval = 5
-private let kRefreshSec: TimeInterval = 900
+private let kRefreshSec: TimeInterval = 15
 
 private let kSounds: [String: String] = [
     "nc": "Glass", "ambient": "Tink", "off": "Pop", "ult": "Submarine",

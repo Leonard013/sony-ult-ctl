@@ -14,5 +14,7 @@
     <true/>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Sony ULT Menu connects to your headphones to control ANC, Ambient Sound, and ULT bass modes.</string>
 </dict>
 </plist>
