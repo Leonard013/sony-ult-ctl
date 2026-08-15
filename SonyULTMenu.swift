@@ -7,7 +7,7 @@ import SwiftUI
 private let kDeviceMAC  = "88-92-CC-08-7B-89"
 private let kChannel: UInt8 = 18
 private let kPollSec: TimeInterval = 5
-private let kRefreshSec: TimeInterval = 15
+private let kRefreshSec: TimeInterval = 10
 
 // ── Sony V2 framing ───────────────────────────────────────────────
 
@@ -84,6 +84,9 @@ class Controller: NSObject {
     private var up = false
     private var seq: UInt8 = 0
 
+    /// Called for every packet the headphones send, solicited or not.
+    var onPacket: ((Pkt) -> Void)?
+
     func connect() -> Bool {
         guard let dev = IOBluetoothDevice(addressString: kDeviceMAC) else { return false }
         var rfch: IOBluetoothRFCOMMChannel?
@@ -98,25 +101,34 @@ class Controller: NSObject {
 
     func close() { ch?.close(); ch = nil; up = false }
 
+    private func write(_ d: Data) {
+        _ = d.withUnsafeBytes { ptr in
+            ch?.writeSync(UnsafeMutableRawPointer(mutating: ptr.baseAddress!),
+                          length: UInt16(d.count))
+        }
+    }
+
+    private func ack(_ receivedSeq: UInt8) { write(buildPkt(ACK, 1 - receivedSeq, [])) }
+
+    /// Send without waiting. SET commands answer with a transport ACK (handled
+    /// in the delegate), not a data reply, so blocking on one only made every
+    /// menu click feel sluggish.
+    func fire(_ pl: [UInt8]) {
+        write(buildPkt(MDR, seq, pl))
+        seq = 1 - seq
+    }
+
+    /// Send a query and wait for *its* reply — opcode + 1. Anything else that
+    /// lands meanwhile is still ACKed and routed by the delegate, so a stray
+    /// notification can no longer end the wait early and strand the real reply.
+    @discardableResult
     func send(_ pl: [UInt8], timeout: TimeInterval = 2) -> [Pkt] {
-        let pkt = buildPkt(MDR, seq, pl)
+        guard let want = pl.first.map({ $0 &+ 1 }) else { return [] }
+        write(buildPkt(MDR, seq, pl))
         seq = 1 - seq
         rxPkts.removeAll()
-        _ = pkt.withUnsafeBytes { ptr in
-            ch?.writeSync(UnsafeMutableRawPointer(mutating: ptr.baseAddress!),
-                          length: UInt16(pkt.count))
-        }
-        pump(timeout) { self.rxPkts.contains { $0.type == MDR } }
-        pump(0.15)
-        var resp: [Pkt] = []
-        for p in rxPkts where p.type == MDR {
-            let a = buildPkt(ACK, 1 - p.seq, [])
-            _ = a.withUnsafeBytes { ptr in
-                self.ch?.writeSync(UnsafeMutableRawPointer(mutating: ptr.baseAddress!),
-                                   length: UInt16(a.count))
-            }
-            resp.append(p)
-        }
+        pump(timeout) { self.rxPkts.contains { $0.type == MDR && $0.payload.first == want } }
+        let resp = rxPkts.filter { $0.type == MDR && $0.payload.first == want }
         rxPkts.removeAll()
         return resp
     }
@@ -133,38 +145,15 @@ class Controller: NSObject {
     // ANC/Ambient use inquired type 0x17. The ambient level (0–20) lives at
     // payload index 6 of a 7-byte SET: [68 17 01 on mode voiceOrNormal level].
     // (voiceOrNormal: 0x01 = normal ambient, 0x02 = voice focus.)
-    func setANC()                              { _ = send([0x68,0x17,0x01,0x01,0x00,0x02,0x00,0x00]) }
-    func setOff()                              { _ = send([0x68,0x17,0x01,0x00,0x00,0x02,0x00,0x00]) }
-    func setAmbient(level: UInt8, voice: Bool) { _ = send([0x68,0x17,0x01,0x01,0x01, voice ? 0x02 : 0x01, level]) }
-    func setULT(_ m: UInt8)                    { _ = send([0x58,0x03,0x00,m,0x06,0x0A,0x0A,0x0A,0x0A,0x0A,0x0A]) }
+    func setANC()                              { fire([0x68,0x17,0x01,0x01,0x00,0x02,0x00,0x00]) }
+    func setOff()                              { fire([0x68,0x17,0x01,0x00,0x00,0x02,0x00,0x00]) }
+    func setAmbient(level: UInt8, voice: Bool) { fire([0x68,0x17,0x01,0x01,0x01, voice ? 0x02 : 0x01, level]) }
+    func setULT(_ m: UInt8)                    { fire([0x58,0x03,0x00,m,0x06,0x0A,0x0A,0x0A,0x0A,0x0A,0x0A]) }
 
-    // ── queries ──
-    func ancStatus() -> ANCState? {
-        for r in send([0x66, 0x17]) {
-            let p = r.payload
-            if p.count >= 7 && p[0] == 0x67 {
-                return ANCState(enabled: p[3] != 0, ambient: p[4] != 0,
-                                voiceFocus: p[5] == 0x02, level: Int(p[6]))
-            }
-        }
-        return nil
-    }
-
-    func ultStatus() -> ULTState? {
-        for r in send([0x56, 0x03]) {
-            let p = r.payload
-            if p.count >= 5 && p[0] == 0x57 { return ULTState(mode: Int(p[3])) }
-        }
-        return nil
-    }
-
-    func battery() -> BatState? {
-        for r in send([0x22, 0x00]) {
-            let p = r.payload
-            if p.count >= 4 && p[0] == 0x23 { return BatState(level: Int(p[2]), charging: p[3] != 0) }
-        }
-        return nil
-    }
+    // ── queries: replies are handled by the packet router, not returned here ──
+    func askANC()     { send([0x66, 0x17], timeout: 0.6) }
+    func askULT()     { send([0x56, 0x03], timeout: 0.6) }
+    func askBattery() { send([0x22, 0x00], timeout: 0.6) }
 
     // ── RFCOMM delegate ──
     @objc func rfcommChannelOpenComplete(_ c: IOBluetoothRFCOMMChannel!, status s: IOReturn) {
@@ -173,7 +162,15 @@ class Controller: NSObject {
     @objc func rfcommChannelData(_ c: IOBluetoothRFCOMMChannel!,
                                  data ptr: UnsafeMutableRawPointer!, length len: Int) {
         rxBuf += Array(Data(bytes: ptr, count: len))
-        rxPkts += extract(&rxBuf)
+        // ACK and route every packet here, including the unsolicited notifies the
+        // headphones push when their state changes (physical button, phone, …).
+        // Those used to sit in rxPkts until the next send() cleared them unread —
+        // which is exactly why button presses never reached the menu.
+        for p in extract(&rxBuf) {
+            if p.type == MDR { ack(p.seq) }
+            rxPkts.append(p)
+            onPacket?(p)
+        }
     }
     @objc func rfcommChannelClosed(_ c: IOBluetoothRFCOMMChannel!) { up = false; ch = nil }
 }
@@ -198,7 +195,7 @@ struct AmbientControls: View {
                     if !editing && !model.suppress { model.onLevel?(Int(model.level)) }   // send on release only
                 })
             }
-            Toggle("Voice Focus", isOn: $model.voice)
+            Toggle("Voice Passthrough", isOn: $model.voice)
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .tint(.blue)
@@ -274,6 +271,7 @@ internal class App: NSObject, NSApplicationDelegate {
 
     private func open() {
         let c = Controller()
+        c.onPacket = { [weak self] p in self?.handle(p) }
         guard c.connect() else { return }
         ctl = c; linked = true
         deviceIt.title = "Sony ULT WEAR"
@@ -289,28 +287,51 @@ internal class App: NSObject, NSApplicationDelegate {
     }
 
     // ── Refresh ──
+    /// Backstop poll. The menu is normally kept current by the notifications the
+    /// headphones push, so this only covers the case where one was missed.
     private func refresh() {
         lastRefresh = ProcessInfo.processInfo.systemUptime
         guard linked, let c = ctl else { return }
+        c.askBattery(); c.askANC(); c.askULT()
+    }
 
-        if let b = c.battery() { batIt.title = "Battery: \(b.level)%\(b.charging ? " ⚡" : "")" }
-
-        for i in [ncIt!, ambIt!, offIt!] { i.state = .off }
-        if let a = c.ancStatus() {
-            if !a.enabled { offIt.state = .on }
-            else if a.ambient {
-                ambIt.state = .on
-                lastLvl = a.level                       // level reads reliably; voice does not,
-                ambModel.suppress = true                // so we keep our own voiceOn as truth
-                ambModel.level = Double(a.level)
-                ambModel.voice = voiceOn
-                ambModel.suppress = false
-                ambIt.title = "Ambient Sound (\(a.level))"
-            } else { ncIt.state = .on }
+    // ── live state from the headphones ──
+    // Same payload layout whether it arrived as a reply (0x67/0x57/0x23) or as an
+    // unprompted notify (0x69/0x59/0x25) — the device sends the latter whenever
+    // its state changes, including from the button on the earcup.
+    private func handle(_ p: Pkt) {
+        guard p.type == MDR, let op = p.payload.first else { return }
+        let d = p.payload
+        switch op {
+        case 0x67, 0x69:
+            guard d.count >= 7 else { return }
+            applyANC(enabled: d[3] != 0, ambient: d[4] != 0, level: Int(d[6]))
+        case 0x57, 0x59:
+            guard d.count >= 5 else { return }
+            applyULT(Int(d[3]))
+        case 0x23, 0x25:
+            guard d.count >= 4 else { return }
+            batIt.title = "Battery: \(Int(d[2]))%\(d[3] != 0 ? " ⚡" : "")"
+        default: break
         }
+    }
 
-        for i in [uOffIt!, u1It!, u2It!] { i.state = .off }
-        if let u = c.ultStatus(), (0...2).contains(u.mode) { [uOffIt, u1It, u2It][u.mode]?.state = .on }
+    /// Voice passthrough is deliberately left alone here — it stays app-owned.
+    private func applyANC(enabled: Bool, ambient: Bool, level: Int) {
+        ncIt.state  = (enabled && !ambient) ? .on : .off
+        ambIt.state = (enabled &&  ambient) ? .on : .off
+        offIt.state = !enabled ? .on : .off
+        guard enabled, ambient else { return }
+        lastLvl = level
+        ambModel.suppress = true
+        ambModel.level = Double(level)
+        ambModel.suppress = false
+        ambIt.title = "Ambient Sound (\(level))"
+    }
+
+    private func applyULT(_ m: Int) {
+        guard (0...2).contains(m) else { return }
+        for (i, it) in [uOffIt!, u1It!, u2It!].enumerated() { it.state = (i == m) ? .on : .off }
     }
 
     // ── Ambient sub-controls ──
