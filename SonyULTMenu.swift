@@ -143,11 +143,12 @@ class Controller: NSObject {
 
     // ── setters ──
     // ANC/Ambient use inquired type 0x17. The ambient level (0–20) lives at
-    // payload index 6 of a 7-byte SET: [68 17 01 on mode voiceOrNormal level].
-    // (voiceOrNormal: 0x01 = normal ambient, 0x02 = voice focus.)
+    // payload index 6 of a 7-byte SET: [68 17 01 on mode voice level].
+    // voice is a boolean (0x00/0x01); the device clamps 0x02 to 0x01. Verified
+    // by readback with 66 17 (Leonard013's review of PR #1).
     func setANC()                              { fire([0x68,0x17,0x01,0x01,0x00,0x02,0x00,0x00]) }
     func setOff()                              { fire([0x68,0x17,0x01,0x00,0x00,0x02,0x00,0x00]) }
-    func setAmbient(level: UInt8, voice: Bool) { fire([0x68,0x17,0x01,0x01,0x01, voice ? 0x02 : 0x01, level]) }
+    func setAmbient(level: UInt8, voice: Bool) { fire([0x68,0x17,0x01,0x01,0x01, voice ? 0x01 : 0x00, level]) }
     func setULT(_ m: UInt8)                    { fire([0x58,0x03,0x00,m,0x06,0x0A,0x0A,0x0A,0x0A,0x0A,0x0A]) }
 
     // ── queries: replies are handled by the packet router, not returned here ──
@@ -195,11 +196,14 @@ struct AmbientControls: View {
                     if !editing && !model.suppress { model.onLevel?(Int(model.level)) }   // send on release only
                 })
             }
-            Toggle("Voice Passthrough", isOn: $model.voice)
+            // Setter only runs on a user click, so syncing model.voice from the
+            // device never echoes a SET back.
+            Toggle("Voice Passthrough", isOn: Binding(
+                get: { model.voice },
+                set: { model.voice = $0; model.onVoice?($0) }))
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .tint(.blue)
-                .onChange(of: model.voice) { _, v in if !model.suppress { model.onVoice?(v) } }
         }
         .padding(.leading, 22)      // indent → reads as nested under Ambient Sound
         .padding(.trailing, 14)
@@ -214,7 +218,7 @@ internal class App: NSObject, NSApplicationDelegate {
     let si = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var ctl: Controller?
     var linked = false, busy = false, lastRefresh: TimeInterval = 0
-    var voiceOn = true, lastLvl = 20
+    var lastLvl = 20
 
     var deviceIt: NSMenuItem!, batIt: NSMenuItem!
     var ncIt: NSMenuItem!, ambIt: NSMenuItem!, offIt: NSMenuItem!
@@ -305,7 +309,7 @@ internal class App: NSObject, NSApplicationDelegate {
         switch op {
         case 0x67, 0x69:
             guard d.count >= 7 else { return }
-            applyANC(enabled: d[3] != 0, ambient: d[4] != 0, level: Int(d[6]))
+            applyANC(enabled: d[3] != 0, ambient: d[4] != 0, voice: d[5] != 0, level: Int(d[6]))
         case 0x57, 0x59:
             guard d.count >= 5 else { return }
             applyULT(Int(d[3]))
@@ -316,8 +320,7 @@ internal class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Voice passthrough is deliberately left alone here — it stays app-owned.
-    private func applyANC(enabled: Bool, ambient: Bool, level: Int) {
+    private func applyANC(enabled: Bool, ambient: Bool, voice: Bool, level: Int) {
         ncIt.state  = (enabled && !ambient) ? .on : .off
         ambIt.state = (enabled &&  ambient) ? .on : .off
         offIt.state = !enabled ? .on : .off
@@ -325,6 +328,7 @@ internal class App: NSObject, NSApplicationDelegate {
         lastLvl = level
         ambModel.suppress = true
         ambModel.level = Double(level)
+        ambModel.voice = voice
         ambModel.suppress = false
         ambIt.title = "Ambient Sound (\(level))"
     }
@@ -340,13 +344,12 @@ internal class App: NSObject, NSApplicationDelegate {
         lastLvl = lvl
         guard linked, let c = ctl, !busy else { return }
         busy = true
-        c.setAmbient(level: UInt8(lvl), voice: voiceOn)
+        c.setAmbient(level: UInt8(lvl), voice: ambModel.voice)
         busy = false
         ncIt.state = .off; offIt.state = .off; ambIt.state = .on
     }
 
     private func voiceChanged(_ v: Bool) {
-        voiceOn = v
         guard linked, let c = ctl, !busy else { return }
         busy = true
         DispatchQueue.main.async {                 // let the switch animate before the blocking send
@@ -362,8 +365,9 @@ internal class App: NSObject, NSApplicationDelegate {
         busy = true; fn(c); NSSound(named: NSSound.Name(snd))?.play(); refresh(); busy = false
     }
 
-    @objc func doNC()   { voiceOn = false; run({ $0.setANC() }, "Glass") }
-    @objc func doAmb()  { voiceOn = true; run({ $0.setAmbient(level: UInt8(self.lastLvl), voice: true) }, "Tink") }
+    @objc func doNC()   { run({ $0.setANC() }, "Glass") }
+    // Voice passthrough defaults ON when switching into Ambient; the switch shows it.
+    @objc func doAmb()  { ambModel.voice = true; run({ $0.setAmbient(level: UInt8(self.lastLvl), voice: true) }, "Tink") }
     @objc func doOff()  { run({ $0.setOff() }, "Pop") }
     @objc func doUOff() { run({ $0.setULT(0) }, "Submarine") }
     @objc func doU1()   { run({ $0.setULT(1) }, "Submarine") }
