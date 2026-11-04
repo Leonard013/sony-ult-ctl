@@ -235,7 +235,7 @@ internal class App: NSObject, NSApplicationDelegate {
 
     private func buildMenu() {
         let m = NSMenu()
-        deviceIt = info(m, "Sony ULT WEAR")
+        deviceIt = info(m, "Sony ULT WEAR — not connected")
         batIt    = info(m, "")
         m.addItem(.separator())
         ncIt    = act(m, "Noise Cancelling", #selector(doNC))

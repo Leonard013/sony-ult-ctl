@@ -2,17 +2,18 @@
 
 Control Sony ULT WEAR (WH-ULT900N) headphones from macOS — no Sony Headphones Connect app needed.
 
-Reverse-engineered the Sony V2 Bluetooth RFCOMM protocol to toggle Noise Cancelling, Ambient Sound, Voice Focus, and ULT bass boost modes. Includes a **native Swift menu bar app** (117 KB) that auto-appears when headphones connect and hides when they disconnect.
+Reverse-engineered the Sony V2 Bluetooth RFCOMM protocol to toggle Noise Cancelling, Ambient Sound (level 0–20), Voice Focus, and ULT bass boost modes. Includes a **native Swift menu bar app** (~175 KB) that tracks the headphones' state in real time, including changes made with the earcup button or from a phone.
 
 ## Menu Bar App
 
 `SonyULTMenu.app` — a native macOS menu bar app (no Python required).
 
-- Appears automatically when headphones connect, hides on disconnect
-- Checkmarks show the active mode
+- Menu bar icon is always shown; the menu says "not connected" until the headphones connect
+- Checkmarks show the active mode and follow changes made with the earcup button or from a phone
+- Ambient Sound level slider (0–20) and Voice Passthrough switch
 - Plays a distinct sound on each mode switch
 - Battery level display
-- 117 KB binary, zero dependencies beyond macOS
+- ~175 KB binary, zero dependencies beyond macOS
 
 ```bash
 # Build

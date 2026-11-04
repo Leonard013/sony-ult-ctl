@@ -400,7 +400,7 @@ examples:
   %(prog)s ambient          Ambient Sound ON
   %(prog)s ambient voice    Ambient Sound + voice focus
   %(prog)s ambient 12       Ambient Sound at level 12 (0-20, default 20)
-  %(prog)s off             Normal mode (NC/Ambient OFF)
+  %(prog)s off              Normal mode (NC/Ambient OFF)
   %(prog)s ult1             ULT bass boost 1
   %(prog)s ult2             ULT deep bass 2
   %(prog)s ultoff           ULT bass OFF
@@ -433,7 +433,7 @@ examples:
                 print("Noise Cancelling ON")
             case "ambient":
                 voice = any(a.lower() in ("voice", "v") for a in args.args)
-                nums = [int(a) for a in args.args if a.isdigit()]
+                nums = [int(a) for a in args.args if a.lstrip("-").isdigit()]
                 level = nums[0] if nums else 20
                 if not 0 <= level <= 20:
                     parser.error("ambient level must be 0-20")
