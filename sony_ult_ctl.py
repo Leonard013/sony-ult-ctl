@@ -13,6 +13,7 @@ Usage:
     python sony_ult_ctl.py anc                # Noise Cancelling ON
     python sony_ult_ctl.py ambient             # Ambient Sound ON
     python sony_ult_ctl.py ambient voice       # Ambient Sound + voice focus
+    python sony_ult_ctl.py ambient 12          # Ambient Sound at level 12 (0-20, default 20)
     python sony_ult_ctl.py off                 # NC/Ambient OFF (Normal mode)
     python sony_ult_ctl.py ult1                # ULT bass boost 1
     python sony_ult_ctl.py ult2                # ULT bass boost 2 (deep bass)
@@ -22,10 +23,8 @@ Usage:
     python sony_ult_ctl.py monitor             # Sniff packets (Ctrl-C to stop)
     python sony_ult_ctl.py raw <hex>           # Send arbitrary payload
 
-Note: The ULT WEAR firmware does not support graduated NC or Ambient levels.
-NC and Ambient are binary on/off. The only sub-toggle within Ambient is voice focus.
-The protocol SET command includes a level byte for compatibility with other Sony
-models (e.g. WH-1000XM5), but the ULT WEAR ignores it.
+Note: Ambient Sound has a level (0-20) and a voice-focus on/off flag.
+NC has no level on the ULT WEAR.
 """
 
 import sys
@@ -118,10 +117,12 @@ def _extract_packets(buf: bytearray) -> list[dict]:
 # ── Command payloads ────────────────────────────────────────────────
 #
 # ANC/Ambient uses AmbientSoundControl2 (inquired type 0x17):
-#   SET: [0x68, 0x17, 0x01, enabled, ambient, 0x02, voice_focus, level*]
+#   SET ambient: [0x68, 0x17, 0x01, 0x01, 0x01, voice_focus, level]   (7 bytes)
+#   SET NC/off:  [0x68, 0x17, 0x01, enabled, 0x00, 0x02, 0x00, 0x00]
 #   GET: [0x66, 0x17]
-#   RET: [0x67, 0x17, 0x01, enabled, ambient, reserved(0x01), voice_focus]
-#   * level byte is accepted but ignored by ULT WEAR firmware
+#   RET: [0x67, 0x17, 0x01, enabled, ambient, voice_focus, level]
+#   voice_focus is 0x00/0x01; level is 0-20. Every SET is also answered with
+#   a 0x69 notify carrying the new state (same layout as RET).
 #
 # ULT uses Equalizer (inquired type 0x03):
 #   SET: [0x58, 0x03, eq_preset, ult_mode, num_bands=6, band1..6]
@@ -137,8 +138,8 @@ def cmd_anc_on():
     return bytes([0x68, 0x17, 0x01, 0x01, 0x00, 0x02, 0x00, 0x00])
 
 
-def cmd_ambient(voice: bool = False):
-    return bytes([0x68, 0x17, 0x01, 0x01, 0x01, 0x02, 0x01 if voice else 0x00, 0x00])
+def cmd_ambient(voice: bool = False, level: int = 20):
+    return bytes([0x68, 0x17, 0x01, 0x01, 0x01, 0x01 if voice else 0x00, level])
 
 
 def cmd_off():
@@ -285,8 +286,8 @@ class SonyController:
     def set_anc(self):
         self.send(cmd_anc_on())
 
-    def set_ambient(self, voice: bool = False):
-        self.send(cmd_ambient(voice))
+    def set_ambient(self, voice: bool = False, level: int = 20):
+        self.send(cmd_ambient(voice, level))
 
     def set_off(self):
         self.send(cmd_off())
@@ -302,7 +303,8 @@ class SonyController:
                 return {
                     "enabled": bool(p[3]),
                     "ambient": bool(p[4]),
-                    "voice_focus": bool(p[6]),
+                    "voice_focus": bool(p[5]),
+                    "level": p[6],
                 }
         return {}
 
@@ -330,7 +332,7 @@ class SonyController:
                 lines.append("Mode:    Normal (OFF)")
             elif anc["ambient"]:
                 vf = " + voice focus" if anc["voice_focus"] else ""
-                lines.append(f"Mode:    Ambient Sound{vf}")
+                lines.append(f"Mode:    Ambient Sound (level {anc['level']}){vf}")
             else:
                 lines.append("Mode:    Noise Cancelling")
         else:
@@ -397,6 +399,7 @@ examples:
   %(prog)s anc              Noise Cancelling ON
   %(prog)s ambient          Ambient Sound ON
   %(prog)s ambient voice    Ambient Sound + voice focus
+  %(prog)s ambient 12       Ambient Sound at level 12 (0-20, default 20)
   %(prog)s off              Normal mode (NC/Ambient OFF)
   %(prog)s ult1             ULT bass boost 1
   %(prog)s ult2             ULT deep bass 2
@@ -429,13 +432,14 @@ examples:
                 ctl.set_anc()
                 print("Noise Cancelling ON")
             case "ambient":
-                voice = any(
-                    a.lower() in ("voice", "v", "1", "true", "yes")
-                    for a in args.args
-                )
-                ctl.set_ambient(voice)
+                voice = any(a.lower() in ("voice", "v") for a in args.args)
+                nums = [int(a) for a in args.args if a.lstrip("-").isdigit()]
+                level = nums[0] if nums else 20
+                if not 0 <= level <= 20:
+                    parser.error("ambient level must be 0-20")
+                ctl.set_ambient(voice, level)
                 vf = " + voice focus" if voice else ""
-                print(f"Ambient Sound{vf}")
+                print(f"Ambient Sound (level {level}){vf}")
             case "off":
                 ctl.set_off()
                 print("Normal mode (NC/Ambient OFF)")

@@ -2,17 +2,18 @@
 
 Control Sony ULT WEAR (WH-ULT900N) headphones from macOS — no Sony Headphones Connect app needed.
 
-Reverse-engineered the Sony V2 Bluetooth RFCOMM protocol to toggle Noise Cancelling, Ambient Sound, Voice Focus, and ULT bass boost modes. Includes a **native Swift menu bar app** (117 KB) that auto-appears when headphones connect and hides when they disconnect.
+Reverse-engineered the Sony V2 Bluetooth RFCOMM protocol to toggle Noise Cancelling, Ambient Sound (level 0–20), Voice Focus, and ULT bass boost modes. Includes a **native Swift menu bar app** (~175 KB) that tracks the headphones' state in real time, including changes made with the earcup button or from a phone.
 
 ## Menu Bar App
 
 `SonyULTMenu.app` — a native macOS menu bar app (no Python required).
 
-- Appears automatically when headphones connect, hides on disconnect
-- Checkmarks show the active mode
+- Menu bar icon is always shown; the menu says "not connected" until the headphones connect
+- Checkmarks show the active mode and follow changes made with the earcup button or from a phone
+- Ambient Sound level slider (0–20) and Voice Passthrough switch
 - Plays a distinct sound on each mode switch
 - Battery level display
-- 117 KB binary, zero dependencies beyond macOS
+- ~175 KB binary, zero dependencies beyond macOS
 
 ```bash
 # Build
@@ -32,6 +33,7 @@ Edit `kDeviceMAC` in `SonyULTMenu.swift` before building.
 | `sony_ult_ctl.py anc` | Noise Cancelling ON |
 | `sony_ult_ctl.py ambient` | Ambient Sound ON |
 | `sony_ult_ctl.py ambient voice` | Ambient Sound + Voice Focus |
+| `sony_ult_ctl.py ambient 12` | Ambient Sound at level 12 (0–20, default 20) |
 | `sony_ult_ctl.py off` | Normal mode (NC/Ambient OFF) |
 | `sony_ult_ctl.py ult1` | ULT bass boost 1 |
 | `sony_ult_ctl.py ult2` | ULT bass boost 2 (deep bass) |
@@ -102,19 +104,23 @@ Every DATA_MDR from the device **must be ACK'd** with `type=0x01, seq=1-received
 ### ANC / Ambient Sound (AmbientSoundControl2, inquired type 0x17)
 
 ```
-SET: [0x68, 0x17, 0x01, enabled, ambient, 0x02, voice_focus, 0x00]
-GET: [0x66, 0x17]
-RET: [0x67, 0x17, 0x01, enabled, ambient, reserved, voice_focus]
+SET ambient: [0x68, 0x17, 0x01, 0x01, 0x01, voice_focus, level]   (7 bytes)
+SET NC/off:  [0x68, 0x17, 0x01, enabled, 0x00, 0x02, 0x00, 0x00]
+GET:         [0x66, 0x17]
+RET:         [0x67, 0x17, 0x01, enabled, ambient, voice_focus, level]
+NOTIFY:      [0x69, 0x17, ...]   same layout as RET
 ```
 
-| Mode | enabled | ambient | voice_focus |
-|------|---------|---------|-------------|
-| Noise Cancelling | 1 | 0 | 0 |
-| Ambient Sound | 1 | 1 | 0 |
-| Ambient + Voice Focus | 1 | 1 | 1 |
-| Normal (OFF) | 0 | 0 | 0 |
+| Mode | enabled | ambient | voice_focus | level |
+|------|---------|---------|-------------|-------|
+| Noise Cancelling | 1 | 0 | – | – |
+| Ambient Sound | 1 | 1 | 0 | 0–20 |
+| Ambient + Voice Focus | 1 | 1 | 1 | 0–20 |
+| Normal (OFF) | 0 | 0 | – | – |
 
-The protocol includes a level byte (last byte of SET) for models with graduated NC/Ambient levels (e.g. WH-1000XM5), but the **ULT WEAR ignores it** — NC and Ambient are binary on/off.
+`voice_focus` is a boolean (`0x00`/`0x01`); larger values are clamped to `0x01`. The ambient level (0–20) is the last byte of the 7-byte SET; the older 8-byte layout put it in a byte the ULT WEAR ignores.
+
+The device answers every SET with a `0x69` notify carrying the new state, and sends the same notify when the mode changes from the earcup button or a phone.
 
 ### ULT Bass Boost (Equalizer system, inquired type 0x03)
 
@@ -148,7 +154,7 @@ RET:  [0x01, 0x00, 0x03, ...] → V2 protocol confirmed
 
 ## Compatibility
 
-Tested on Sony ULT WEAR (WH-ULT900N) with Airoha chipset. The V2 protocol is shared across many Sony headphones — other models may work with minor adjustments to command payloads. Models with graduated levels (WH-1000XM4/XM5) likely respond to the level byte that the ULT WEAR ignores.
+Tested on Sony ULT WEAR (WH-ULT900N) with Airoha chipset. The V2 protocol is shared across many Sony headphones — other models may work with minor adjustments to command payloads.
 
 ## License
 
